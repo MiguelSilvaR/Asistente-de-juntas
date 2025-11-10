@@ -1,0 +1,9 @@
+# Archivos sensibles y temporales
+.env
+service_account.json
+.venv/
+__pycache__/
+*.log
+# Credenciales y secretos
+service_account.json
+*firebase-adminsdk-*.json
