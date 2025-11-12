@@ -10,10 +10,10 @@ export default function App() {
     addMessage({ role: "user", content: text });
 
     // 2) agrega placeholder del bot para ir rellenando (stream o no stream)
-    addMessage({ role: "assistant", content: "" });
+    addMessage({ role: "assistant", content: "Pensando" });
 
     // 3) fake respuesta (sustituye por tu fetch/SSE)
-    const reply = await fakeLLM(text);
+    const reply = await execUserOp(text);
     useChatStore.setState((state) => {
       const msgs = [...state.messages];
       msgs[msgs.length - 1] = { role: "assistant", content: reply };
@@ -50,8 +50,52 @@ export default function App() {
   );
 }
 
-function fakeLLM(q: string) {
-  return new Promise<string>((res) =>
-    setTimeout(() => res(`Eco: ${q}`), 600)
-  );
+function execUserOp(q: string) {
+  return fetch("http://127.0.0.1:8000/v1/intent/create/parse", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      text: q   // 🔥 campo exacto que tu backend espera
+    })
+  }).then(async (res) => {
+    if (!res.ok)
+      return "Por favor, se más claro con tus instrucciones e intenta de nuevo"
+    let json_res = await res.json()
+    json_res = json_res.intent
+    console.log(json_res)
+    if (json_res.intent == "create") {
+      delete json_res.intent
+      let create = await fetch("http://127.0.0.1:8000/v1/meetings", 
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(json_res)
+        })
+        .then(async(cres) => {
+          return cres.json()
+        })
+      return `Se creo exitosamente la junta con el siguiente id: ${create.id}`
+    } else if (json_res.intent == "cancel") {
+      let cancel = await fetch(`http://127.0.0.1:8000/v1/meetings/${json_res.cancel_id}`, 
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json"
+          }
+        })
+        .then(async(cres) => {
+          return cres.json()
+        })
+      return `Se cancelo exitosamente la junta con el siguiente id: ${cancel.id}`
+    } else {
+      return "Función aún no soportada"
+    }
+  })
+    .catch(async (err) => {
+      return "Hubo un error en tu llamada, intenta más tarde"
+    });
 }

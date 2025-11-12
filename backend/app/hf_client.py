@@ -7,6 +7,7 @@ import json
 import requests
 from pathlib import Path
 from typing import Dict, Any
+from datetime import datetime
 
 # ------------------------------------------------------------
 # 1️Cargar .env manualmente (sin depender de dotenv)
@@ -25,7 +26,7 @@ if ENV_PATH.exists():
 # ------------------------------------------------------------
 # Configuración general
 # ------------------------------------------------------------
-HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "")
+HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "***REMOVED***")
 HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 HF_URL = "https://router.huggingface.co/v1/chat/completions"
 
@@ -54,10 +55,14 @@ def parse_create_intent(text: str) -> Dict[str, Any]:
 
     system_prompt = (
         "Eres un asistente que analiza instrucciones en lenguaje natural "
-        "y responde SOLO en formato JSON válido con los siguientes campos:\n"
-        "{title, date (YYYY-MM-DD), start_time (HH:MM), duration_min, "
-        "attendees (lista de correos), agenda, timezone}.\n"
-        "Si falta algún dato, usa valores razonables por defecto."
+        "y responde SOLO en formato JSON válido con la siguiente estructura SI Y SOLO SI el USUARIO desea crear una reunion y te da la suficiente informacion:\n"
+        """
+        {"summary","location":"Google Meet","description","start":{"dateTime","timeZone"},"end":{"dateTime","timeZone"},"attendees":[{"email"}],"conferenceData":{"createRequest":{"requestId":"sma-12345"}},intent:create}
+        """
+        "si desea cancelar, analiza si te da un id y devuelve un JSON CON UNICAMENTE:"
+        "\{cancel_id, intent:cancel\}"
+        "En caso que las instrucciones no sean claras regresa un JSON \{err\} explicando que falta"
+        "Considera que la fecha de hoy es " + str(datetime.now())
     )
 
     payload = {

@@ -1,9 +1,11 @@
+from app.calendar import create_calendar_meeting, cancel_calendar_meeting
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from firebase_admin import firestore as fb_fs
 from app.firebase_config import db
+from fastapi.encoders import jsonable_encoder
 from app.hf_client import parse_create_intent
 
 # ============================================================
@@ -38,15 +40,31 @@ app.add_middleware(
 # ============================================================
 # MODELOS DE REUNIONES
 # ============================================================
-class MeetingCreate(BaseModel):
-    title: str = Field(..., description="Título de la reunión")
-    date: Optional[str] = Field(None, description="YYYY-MM-DD")
-    start_time: Optional[str] = Field(None, description="HH:MM (24h)")
-    duration_min: int = Field(30, ge=5, le=480, description="Duración en minutos")
-    attendees: List[EmailStr] = Field(default_factory=list, description="Correos de asistentes")
-    agenda: Optional[str] = ""
-    timezone: str = Field("America/Matamoros", description="Zona horaria")
+class EventDateTime(BaseModel):
+    date_time: str = Field(..., alias="dateTime", description="RFC3339, p.ej. 2025-11-11T16:00:00-06:00")
+    time_zone: Optional[str] = Field(None, alias="timeZone")
+    model_config = ConfigDict(populate_by_name=True)
 
+class Attendee(BaseModel):
+    email: EmailStr
+
+class ConferenceCreateRequest(BaseModel):
+    request_id: str = Field(..., alias="requestId")
+    model_config = ConfigDict(populate_by_name=True)
+
+class ConferenceData(BaseModel):
+    create_request: ConferenceCreateRequest = Field(..., alias="createRequest")
+    model_config = ConfigDict(populate_by_name=True)
+
+class MeetingEvent(BaseModel):
+    summary: str
+    location: Optional[str] = None
+    description: Optional[str] = None
+    start: EventDateTime
+    end: EventDateTime
+    attendees: List[Attendee] = Field(default_factory=list)
+    conference_data: Optional[ConferenceData] = Field(None, alias="conferenceData")
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
 class MeetingOut(BaseModel):
     id: str
@@ -124,37 +142,28 @@ def list_meetings():
         out.append(data)
     return out
 
-
-@app.post("/v1/meetings/create", response_model=Dict[str, Any])
-def create_meeting(body: MeetingCreate):
-    start_iso = _combine_iso(body.date, body.start_time)
-    try:
-        end_iso = (datetime.fromisoformat(start_iso) + timedelta(minutes=body.duration_min)).isoformat()
-    except Exception:
-        raise HTTPException(400, "Fecha u hora inválida, usa YYYY-MM-DD y HH:MM")
-
-    doc = {
-        "title": body.title,
-        "start": start_iso,
-        "end": end_iso,
-        "duration_min": body.duration_min,
-        "attendees": body.attendees,
-        "agenda": body.agenda or "",
-        "timezone": body.timezone,
-        "status": "created",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
+@app.post("/v1/meetings", response_model=Any)
+def create_meeting(evt: MeetingEvent):
+    data = jsonable_encoder(evt, exclude_none=True, by_alias=True)
+    doc = create_calendar_meeting(data)
     ref = db.collection("meetings").document()
     ref.set(doc)
-    doc["id"] = ref.id
+    return {"ok":True, "id": doc["id"]}
 
-    # 🔹 Registrar acción CREATE
-    actor = (doc.get("attendees") or ["system@local"])[0]
-    log_action("create", doc["id"], actor)
+@app.delete("/v1/meetings/{meeting_id}", response_model=Any)
+def cancel_meeting(meeting_id: str):
+    cancel_calendar_meeting(meeting_id)
+    docs = db.collection("meetings").where("id", "==", meeting_id).stream()
 
-    return {"ok": True, "meeting": doc}
+    batch = db.batch()
+    count = 0
+    
+    for doc in docs:
+        batch.delete(doc.reference)
+        count += 1
 
+    batch.commit()
+    return {"ok":True, "id":meeting_id}
 
 @app.post("/v1/meetings/{meeting_id}/cancel")
 def cancel_meeting(meeting_id: str, body: ActionLogCreate):
@@ -208,8 +217,6 @@ def intent_create_parse(payload: IntentIn):
     data = parse_create_intent(payload.text)
     if "__error__" in data:
         raise HTTPException(status_code=502, detail=data["__error__"])
-    if "timezone" not in data or not data["timezone"]:
-        data["timezone"] = payload.default_timezone or "America/Matamoros"
     return {"intent": data}
 
 
