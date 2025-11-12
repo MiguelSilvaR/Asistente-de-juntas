@@ -26,7 +26,7 @@ if ENV_PATH.exists():
 # ------------------------------------------------------------
 # Configuración general
 # ------------------------------------------------------------
-HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "***REMOVED***")
+HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "")
 HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 HF_URL = "https://router.huggingface.co/v1/chat/completions"
 
