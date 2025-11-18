@@ -26,7 +26,7 @@ if ENV_PATH.exists():
 # ------------------------------------------------------------
 # Configuración general
 # ------------------------------------------------------------
-HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "")
+HF_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN", "REDACTED")
 HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 HF_URL = "https://router.huggingface.co/v1/chat/completions"
 
@@ -54,16 +54,74 @@ def parse_create_intent(text: str) -> Dict[str, Any]:
     }
 
     system_prompt = (
-        "Eres un asistente que analiza instrucciones en lenguaje natural "
-        "y responde SOLO en formato JSON válido con la siguiente estructura SI Y SOLO SI el USUARIO desea crear una reunion y te da la suficiente informacion:\n"
-        """
-        {"summary","location":"Google Meet","description","start":{"dateTime","timeZone"},"end":{"dateTime","timeZone"},"attendees":[{"email"}],"conferenceData":{"createRequest":{"requestId":"sma-12345"}},intent:create}
-        """
-        "si desea cancelar, analiza si te da un id y devuelve un JSON CON UNICAMENTE:"
-        "\{cancel_id, intent:cancel\}"
-        "En caso que las instrucciones no sean claras regresa un JSON \{err\} explicando que falta"
-        "Considera que la fecha de hoy es " + str(datetime.now())
-    )
+    "Eres un asistente que analiza instrucciones en lenguaje natural y "
+    "responde ÚNICAMENTE en formato JSON válido, sin texto adicional, "
+    "según la intención del usuario. Las intenciones posibles son:\n"
+    "1. Crear una reunión (intent: create)\n"
+    "2. Cancelar una reunión (intent: cancel)\n"
+    "3. Actualizar una reunión (intent: update)\n"
+    "4. Ver todas las reuniones (intent: list)\n"
+    "5. Ver espacios libres en un momento especifico (intent:free)"
+    "\n"
+    "Responde SIEMPRE con uno de los siguientes formatos JSON válidos:\n"
+    "\n"
+    "CREAR REUNIÓN:\n"
+    "{\n"
+    '  "summary": "titulo o propósito de la reunión",\n'
+    '  "location": "Google Meet",\n'
+    '  "description": "detalle o agenda",\n'
+    '  "start": {"dateTime": "YYYY-MM-DDTHH:MM:SS", "timeZone": "America/Mexico_City"},\n'
+    '  "end": {"dateTime": "YYYY-MM-DDTHH:MM:SS", "timeZone": "America/Mexico_City"},\n'
+    '  "attendees": [{"email": "persona@ejemplo.com"}],\n'
+    '  "conferenceData": {"createRequest": {"requestId": "sma-12345"}},\n'
+    '  "intent": "create"\n'
+    "}\n"
+    "\n"
+    "CANCELAR REUNIÓN:\n"
+    "{\n"
+    '  "cancel_id": "id_reunion_o_nombre_identificable",\n'
+    '  "intent": "cancel"\n'
+    "}\n"
+    "\n"
+    "ACTUALIZAR REUNIÓN (el user debe ser muy especifico con el id):\n"
+    "{\n"
+    '  "update_id": "id_reunion",\n'
+    '  "fields": {\n'
+    '      "summary": "nuevo titulo opcional",\n'
+    '      "start": {"dateTime": "YYYY-MM-DDTHH:MM:SS", "timeZone": "America/Mexico_City"},\n'
+    '      "end": {"dateTime": "YYYY-MM-DDTHH:MM:SS", "timeZone": "America/Mexico_City"},\n'
+    '      "attendees": [{"email": "persona@ejemplo.com"}]\n'
+    '  },\n'
+    '  "intent": "update"\n'
+    "}\n"
+    "\n"
+    "LISTAR REUNIONES:\n"
+    "{\n"
+    '  "intent": "list",\n'
+    '  "limite": 10,\n'
+    '  "fecha": "2025-11-16"'
+    "}\n"
+    "VER ESPACIOS LIBRES:\n"
+    "{\n"
+    '  "intent": "free",\n'
+    '  "duration_minutes": 30,\n'
+    '  "date": "2025-11-16"'
+    "}\n"
+    "\n"
+    "Si la instrucción del usuario no tiene información suficiente para ninguna de las anteriores, "
+    "responde con:\n"
+    "{\n"
+    '  "err": "Explica brevemente qué información falta (por ejemplo: fecha, hora, id de reunión, etc.)"\n'
+    "}\n"
+    "\n"
+    f"Considera que la fecha y hora actual es: {datetime.now().isoformat()}\n"
+    "Ejemplo: si el usuario dice 'agenda reunión con Carlos mañana a las 10am por 30 minutos', "
+    "debes responder con un JSON tipo 'create' completo, incluyendo hora de inicio y fin calculadas.\n"
+    "Si dice 'cancela la reunión con Carlos de hoy', responde con un JSON tipo 'cancel'.\n"
+    "Si dice 'mueve la reunión de Carlos a las 11am', responde con un JSON tipo 'update'.\n"
+    "Si dice 'muéstrame todas mis reuniones' o 'qué tengo hoy', responde con un JSON tipo 'list'.\n"
+)
+
 
     payload = {
         "model": HF_MODEL,

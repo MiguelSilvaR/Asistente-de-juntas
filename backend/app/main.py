@@ -1,5 +1,5 @@
-from app.calendar import create_calendar_meeting, cancel_calendar_meeting
-from fastapi import FastAPI, HTTPException
+from app.calendar import create_calendar_meeting, cancel_calendar_meeting, find_free_slots_for_day, list_events_for_date, update_calendar_meeting
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -7,6 +7,7 @@ from firebase_admin import firestore as fb_fs
 from app.firebase_config import db
 from fastapi.encoders import jsonable_encoder
 from app.hf_client import parse_create_intent
+from datetime import date
 
 # ============================================================
 # CONFIGURACIÓN BÁSICA
@@ -78,6 +79,20 @@ class MeetingOut(BaseModel):
     status: str
     created_at: str
 
+class DateTimeField(BaseModel):
+    dateTime: str
+    timeZone: str
+
+class Attendee(BaseModel):
+    email: str
+
+class MeetingUpdate(BaseModel):
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    start: Optional[DateTimeField] = None
+    end: Optional[DateTimeField] = None
+    attendees: Optional[List[Attendee]] = None
+
 
 # ============================================================
 # MODELOS DE ACCIONES (NUEVA TABLA)
@@ -131,16 +146,23 @@ def log_action(action: str, action_id: str, user: str, date_iso: Optional[str] =
 def root():
     return {"message": "API funcionando 🚀"}
 
+class FreeSlotsRequest(BaseModel):
+    date: date           # "2025-11-17"
+    duration_minutes: int = 30
 
-@app.get("/v1/meetings", response_model=List[MeetingOut])
-def list_meetings():
-    docs = db.collection("meetings").order_by("created_at").stream()
-    out = []
-    for d in docs:
-        data = d.to_dict()
-        data["id"] = d.id
-        out.append(data)
-    return out
+@app.post("/v1/meetings/free", response_model=Any)
+def list_free_slots(body: FreeSlotsRequest):
+    slots = find_free_slots_for_day(
+        date=body.date,
+        min_slot_minutes=body.duration_minutes,
+    )
+    return {"ok": True, "slots": slots}
+
+@app.get("/v1/meetings", response_model=Any)
+def list_meetings(fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD")):
+    fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date()
+    evts = list_events_for_date(fecha_dt)
+    return {"ok": True, "events": evts}
 
 @app.post("/v1/meetings", response_model=Any)
 def create_meeting(evt: MeetingEvent):
@@ -164,6 +186,25 @@ def cancel_meeting(meeting_id: str):
 
     batch.commit()
     return {"ok":True, "id":meeting_id}
+
+@app.put("/v1/meetings/{meeting_id}", response_model=Any)
+def update_meeting(meeting_id: str, body: MeetingUpdate):
+    data = jsonable_encoder(body, exclude_none=True, by_alias=True)
+    update_calendar_meeting(meeting_id, data)
+    query = db.collection("meetings").where("id", "==", meeting_id).limit(1).stream()
+    doc_ref = None
+    for d in query:
+        doc_ref = d.reference
+        break
+
+    if not doc_ref:
+        raise HTTPException(status_code=404, detail="Meeting no encontrada en Firestore")
+
+    doc_ref.update(data)
+    return {
+        "ok": True,
+        "id": meeting_id
+    }
 
 @app.post("/v1/meetings/{meeting_id}/cancel")
 def cancel_meeting(meeting_id: str, body: ActionLogCreate):
