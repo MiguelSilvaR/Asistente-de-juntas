@@ -3,3 +3,5 @@ node_modules
 
 token.json
 calendar_service_account.json
+
+replacements.txt
